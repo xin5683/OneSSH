@@ -5,6 +5,7 @@ go 1.26.10
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/google/uuid v1.6.0
+	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/pkg/sftp v1.13.11
 	github.com/pmezard/go-difflib v1.0.0
