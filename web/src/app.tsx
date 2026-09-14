@@ -20,6 +20,7 @@ import { NotFoundPage } from '@/pages/not-found'
 import { OAuthAuthorizePage } from '@/pages/oauth-authorize'
 import { TerminalPage } from '@/pages/terminal'
 import { TokensPage } from '@/pages/tokens'
+import { UsersPage } from '@/pages/users'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -81,6 +82,7 @@ export default function App() {
                   <Route path="hosts" element={<HostsPage />} />
                   <Route path="keys" element={<KeysPage />} />
                   <Route path="tokens" element={<TokensPage />} />
+                  <Route path="users" element={<UsersPage />} />
                   <Route path="terminal" element={<TerminalPage />} />
                   <Route path="files" element={<FilesPage />} />
                   <Route path="jobs" element={<JobsPage />} />

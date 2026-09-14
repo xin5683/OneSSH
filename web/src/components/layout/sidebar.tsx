@@ -3,6 +3,7 @@ import { CaretLineLeft, CaretLineRight } from '@phosphor-icons/react'
 import { cn } from '@/lib/cn'
 import { LogoTile } from '@/components/brand/logo'
 import { Tooltip } from '@/components/ui/tooltip'
+import { useMe } from '@/api/queries'
 import { navGroups } from './nav-items'
 
 export function Brand({ collapsed, className }: { collapsed?: boolean; className?: string }) {
@@ -25,17 +26,23 @@ export function NavList({
   // 折叠态要把导航项塞进 Tooltip 的 asChild 触发器，而 Radix 会把 NavLink 的
   // className 函数当字符串拼接掉，样式会整段失效——所以激活态自己算，className 保持字符串。
   const { pathname } = useLocation()
+  const { data: me } = useMe()
+  const isAdmin = me?.is_admin ?? true
 
   return (
     <nav className="flex flex-col gap-6 px-3">
-      {navGroups.map((group, gi) => (
+      {navGroups.map((group, gi) => {
+        // adminOnly 项对 member 整组隐藏（如整组都不可见则连分组标题一起收掉）
+        const items = group.items.filter((item) => !item.adminOnly || isAdmin)
+        if (items.length === 0) return null
+        return (
         <div key={group.title ?? `group-${gi}`} className="space-y-0.5">
           {group.title && !collapsed && (
             <p className="px-2.5 pb-1.5 text-[11px] font-medium tracking-[0.08em] text-muted uppercase">
               {group.title}
             </p>
           )}
-          {group.items.map(({ to, label, icon: Icon }) => {
+          {items.map(({ to, label, icon: Icon }) => {
             const isActive = to === '/' ? pathname === '/' : pathname.startsWith(to)
             const link = (
               <NavLink
@@ -66,7 +73,8 @@ export function NavList({
             )
           })}
         </div>
-      ))}
+        )
+      })}
     </nav>
   )
 }

@@ -30,6 +30,19 @@ func (a *API) memories(w http.ResponseWriter, r *http.Request) {
 		}
 		hostID = &value
 	}
+	p, _ := PrincipalFromContext(r.Context())
+	authorized := map[int64]bool{}
+	if !p.IsAdmin() {
+		authorized[0] = true // 0 = 全局记忆库对 member 可见
+		for _, id := range a.mustUserHostIDs(r, p.ID) {
+			authorized[id] = true
+		}
+		// member 只能翻自己授权主机的记忆库
+		if hostID != nil && !authorized[*hostID] {
+			http.Error(w, "无权访问该主机的记忆库", http.StatusForbidden)
+			return
+		}
+	}
 	limit := 50
 	if raw := query.Get("limit"); raw != "" {
 		value, err := strconv.Atoi(raw)
@@ -52,6 +65,15 @@ func (a *API) memories(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, err)
 		return
+	}
+	if !p.IsAdmin() {
+		filtered := memories[:0]
+		for _, m := range memories {
+			if m.HostID == nil || authorized[*m.HostID] {
+				filtered = append(filtered, m)
+			}
+		}
+		memories = filtered
 	}
 	jsonOut(w, http.StatusOK, memories)
 }
@@ -79,10 +101,44 @@ func (a *API) memoryStats(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusInternalServerError, err)
 		return
 	}
-	hosts, err := a.Store.ListHosts(r.Context())
-	if err != nil {
-		apiError(w, http.StatusInternalServerError, err)
-		return
+	p, _ := PrincipalFromContext(r.Context())
+	authorized := map[int64]bool{}
+	if !p.IsAdmin() {
+		authorized[0] = true
+		for _, id := range a.mustUserHostIDs(r, p.ID) {
+			authorized[id] = true
+		}
+	}
+	var hosts []struct {
+		ID   int64
+		Name string
+	}
+	if p.IsAdmin() {
+		list, err := a.Store.ListHosts(r.Context())
+		if err != nil {
+			apiError(w, http.StatusInternalServerError, err)
+			return
+		}
+		for _, h := range list {
+			hosts = append(hosts, struct {
+				ID   int64
+				Name string
+			}{h.ID, h.Name})
+		}
+	} else {
+		for id := range authorized {
+			if id == 0 {
+				continue
+			}
+			h, err := a.Store.GetHost(r.Context(), id)
+			if err != nil {
+				continue
+			}
+			hosts = append(hosts, struct {
+				ID   int64
+				Name string
+			}{h.ID, h.Name})
+		}
 	}
 	hostNames := make(map[int64]string, len(hosts))
 	for _, host := range hosts {
@@ -94,6 +150,9 @@ func (a *API) memoryStats(w http.ResponseWriter, r *http.Request) {
 		var hostName *string
 		if stat.HostID.Valid {
 			id := stat.HostID.Int64
+			if !p.IsAdmin() && !authorized[id] {
+				continue
+			}
 			name := hostNames[id]
 			hostID = &id
 			hostName = &name

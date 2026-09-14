@@ -68,6 +68,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /tokens/{id}", a.token)
 	mux.HandleFunc("DELETE /tokens/{id}", a.token)
 	mux.HandleFunc("GET /tool-groups", a.toolGroups)
+	a.usersRoutes(mux)
 	mux.HandleFunc("GET /jobs", a.jobsList)
 	mux.HandleFunc("POST /jobs/{id}/kill", a.jobKill)
 	mux.HandleFunc("GET /jobs/{id}/logs", a.jobLogs)
@@ -114,11 +115,41 @@ func hostErrorStatus(err error) int {
 	}
 }
 
+// requireHostAuthorization 校验当前用户可操作目标主机；admin 恒通过。
+// 返回 false 时已写好 403 响应。
+func (a *API) requireHostAuthorization(w http.ResponseWriter, r *http.Request, hostID int64) bool {
+	p, ok := PrincipalFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	if p.IsAdmin() {
+		return true
+	}
+	authorized, err := a.Store.UserAuthorizedHost(r.Context(), p.ID, hostID)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, err)
+		return false
+	}
+	if !authorized {
+		http.Error(w, "无权访问该主机", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
 type hostInput = hostmanager.Input
 
 func (a *API) hosts(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		list, err := a.Store.ListHosts(r.Context())
+		p, _ := PrincipalFromContext(r.Context())
+		var list []store.Host
+		var err error
+		if p.IsAdmin() {
+			list, err = a.Store.ListHosts(r.Context())
+		} else {
+			list, err = a.Store.ListHostsForUser(r.Context(), p.ID)
+		}
 		if err != nil {
 			apiError(w, 500, err)
 			return
@@ -462,6 +493,7 @@ func (a *API) token(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (a *API) jobsList(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFromContext(r.Context())
 	var hostID *int64
 	if name := r.URL.Query().Get("host"); name != "" {
 		h, err := a.Store.GetHostByName(r.Context(), name)
@@ -471,17 +503,45 @@ func (a *API) jobsList(w http.ResponseWriter, r *http.Request) {
 		}
 		hostID = &h.ID
 	}
+	// member 只看得到授权主机上的任务：先按授权过滤再交给刷新逻辑
 	list, err := a.Store.ListJobs(r.Context(), nil, hostID)
 	if err != nil {
 		apiError(w, 500, err)
 		return
 	}
+	if !p.IsAdmin() {
+		authorized := make(map[int64]bool)
+		for _, id := range a.mustUserHostIDs(r, p.ID) {
+			authorized[id] = true
+		}
+		filtered := list[:0]
+		for _, j := range list {
+			if authorized[j.HostID] {
+				filtered = append(filtered, j)
+			}
+		}
+		list = filtered
+	}
 	jsonOut(w, 200, a.Jobs.RefreshAll(r.Context(), list))
 }
+
+// mustUserHostIDs 拉用户授权主机集合；出错时记日志返回空集（宁可全拒不可全放）。
+func (a *API) mustUserHostIDs(r *http.Request, userID int64) []int64 {
+	ids, err := a.Store.UserHostIDs(r.Context(), userID)
+	if err != nil {
+		log.Printf("读取用户 %d 主机授权失败: %v", userID, err)
+		return nil
+	}
+	return ids
+}
+
 func (a *API) jobKill(w http.ResponseWriter, r *http.Request) {
 	j, err := a.Store.GetJob(r.Context(), r.PathValue("id"))
 	if err != nil {
 		apiError(w, 404, err)
+		return
+	}
+	if !a.requireHostAuthorization(w, r, j.HostID) {
 		return
 	}
 	if err = a.Jobs.Kill(r.Context(), j, "TERM"); err != nil {
@@ -562,6 +622,9 @@ func (a *API) metrics(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 400, err)
 		return
 	}
+	if !a.requireHostAuthorization(w, r, id) {
+		return
+	}
 	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
 	if hours <= 0 || hours > 24*30 {
 		hours = 24
@@ -577,21 +640,34 @@ func (a *API) metrics(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOut(w, 200, out)
 }
-func (a *API) hostNameByID(ctx context.Context, raw string) (string, error) {
+func (a *API) hostNameByID(ctx context.Context, raw string) (store.Host, error) {
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
-		return "", err
+		return store.Host{}, err
 	}
-	h, err := a.Store.GetHost(ctx, id)
-	return h.Name, err
+	return a.Store.GetHost(ctx, id)
 }
-func (a *API) sftpList(w http.ResponseWriter, r *http.Request) {
-	name, err := a.hostNameByID(r.Context(), r.PathValue("hostID"))
+
+// authorizedHostByID 解析 hostID 路径参数并校验当前用户对该主机的权限；
+// 失败时已写好响应，返回 false。
+func (a *API) authorizedHostByID(w http.ResponseWriter, r *http.Request) (store.Host, bool) {
+	h, err := a.hostNameByID(r.Context(), r.PathValue("hostID"))
 	if err != nil {
 		apiError(w, 404, err)
+		return store.Host{}, false
+	}
+	if !a.requireHostAuthorization(w, r, h.ID) {
+		return store.Host{}, false
+	}
+	return h, true
+}
+
+func (a *API) sftpList(w http.ResponseWriter, r *http.Request) {
+	h, ok := a.authorizedHostByID(w, r)
+	if !ok {
 		return
 	}
-	items, err := a.Files.List(r.Context(), name, r.URL.Query().Get("path"))
+	items, err := a.Files.List(r.Context(), h.Name, r.URL.Query().Get("path"))
 	if err != nil {
 		apiError(w, 502, err)
 		return
@@ -599,13 +675,12 @@ func (a *API) sftpList(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, 200, items)
 }
 func (a *API) sftpDownload(w http.ResponseWriter, r *http.Request) {
-	name, err := a.hostNameByID(r.Context(), r.PathValue("hostID"))
-	if err != nil {
-		apiError(w, 404, err)
+	h, ok := a.authorizedHostByID(w, r)
+	if !ok {
 		return
 	}
 	p := r.URL.Query().Get("path")
-	file, size, err := a.Files.OpenRead(r.Context(), name, p, 100<<20)
+	file, size, err := a.Files.OpenRead(r.Context(), h.Name, p, 100<<20)
 	if err != nil {
 		apiError(w, 502, err)
 		return
@@ -625,16 +700,15 @@ func (a *API) sftpDownload(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (a *API) sftpUpload(w http.ResponseWriter, r *http.Request) {
-	name, err := a.hostNameByID(r.Context(), r.PathValue("hostID"))
-	if err != nil {
-		apiError(w, 404, err)
+	h, ok := a.authorizedHostByID(w, r)
+	if !ok {
 		return
 	}
-	if err = r.ParseMultipartForm(100 << 20); err != nil {
+	if err := r.ParseMultipartForm(100 << 20); err != nil {
 		apiError(w, 400, err)
 		return
 	}
-	f, h, err := r.FormFile("file")
+	f, header, err := r.FormFile("file")
 	if err != nil {
 		apiError(w, 400, err)
 		return
@@ -647,9 +721,9 @@ func (a *API) sftpUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	p := r.FormValue("path")
 	if strings.HasSuffix(p, "/") || p == "" {
-		p += h.Filename
+		p += header.Filename
 	}
-	out, err := a.Files.Write(r.Context(), name, p, data, 0o644)
+	out, err := a.Files.Write(r.Context(), h.Name, p, data, 0o644)
 	if err != nil {
 		apiError(w, 502, err)
 		return
@@ -662,6 +736,17 @@ func (a *API) sse(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 500, fmt.Errorf("不支持 SSE"))
 		return
 	}
+	p, _ := PrincipalFromContext(r.Context())
+	// member 只收授权主机的事件；事件载荷用主机名标注归属，无 host 字段的全局事件放行
+	var allowed map[string]bool
+	if !p.IsAdmin() {
+		allowed = make(map[string]bool)
+		for _, id := range a.mustUserHostIDs(r, p.ID) {
+			if h, err := a.Store.GetHost(r.Context(), id); err == nil {
+				allowed[h.Name] = true
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	ch, unsubscribe := a.Events.Subscribe()
@@ -671,6 +756,12 @@ func (a *API) sse(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case e := <-ch:
+			if allowed != nil {
+				host, _ := e.Data.(map[string]any)["host"].(string)
+				if host != "" && !allowed[host] {
+					continue
+				}
+			}
 			fmt.Fprintf(w, "data: %s\n\n", e.JSON())
 			flusher.Flush()
 		}

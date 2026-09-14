@@ -58,6 +58,12 @@ var migration0014 string
 //go:embed migrations/0015_host_archive.sql
 var migration0015 string
 
+//go:embed migrations/0016_users_sso.sql
+var migration0016 string
+
+//go:embed migrations/0017_sso_state_drop_verifier.sql
+var migration0017 string
+
 type Store struct {
 	DB      *sql.DB
 	writeMu sync.Mutex
@@ -145,6 +151,8 @@ func migrate(db *sql.DB) error {
 		{version: 13, sql: migration0013},
 		{version: 14, sql: migration0014},
 		{version: 15, sql: migration0015},
+		{version: 16, sql: migration0016},
+		{version: 17, sql: migration0017},
 	} {
 		if err := applyMigration(db, m); err != nil {
 			return fmt.Errorf("版本 %d: %w", m.version, err)
@@ -165,6 +173,9 @@ func applyMigration(db *sql.DB, m migration) error {
 		return err
 	}
 	if applied != 0 {
+		if err := repairAppliedMigration(tx, m.version); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 	switch m.version {
@@ -232,6 +243,48 @@ func applyMigration(db *sql.DB, m migration) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// repairAppliedMigration 处理 fork 与上游都曾使用 13/14 版本号造成的迁移碰撞。
+// 旧 fork 库把这两版登记为多用户迁移，上游 13/14 的列变更会被误判为已执行。
+func repairAppliedMigration(tx *sql.Tx, version int) error {
+	switch version {
+	case 13:
+		for _, column := range []struct {
+			table string
+			name  string
+			alter string
+		}{
+			{"tokens", "disabled_tools_json", `ALTER TABLE tokens ADD COLUMN disabled_tools_json TEXT NOT NULL DEFAULT '[]'`},
+			{"oauth_authorization_codes", "disabled_tools_json", `ALTER TABLE oauth_authorization_codes ADD COLUMN disabled_tools_json TEXT NOT NULL DEFAULT '[]'`},
+			{"oauth_refresh_tokens", "disabled_tools_json", `ALTER TABLE oauth_refresh_tokens ADD COLUMN disabled_tools_json TEXT NOT NULL DEFAULT '[]'`},
+		} {
+			ok, err := tableHasColumn(tx, column.table, column.name)
+			if err != nil {
+				return err
+			}
+			if ok {
+				continue
+			}
+			if _, err = tx.Exec(column.alter); err != nil {
+				return err
+			}
+		}
+	case 14:
+		ok, err := tableHasColumn(tx, "jobs", "last_checked_at")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			if _, err = tx.Exec(`ALTER TABLE jobs ADD COLUMN last_checked_at INTEGER`); err != nil {
+				return err
+			}
+			if _, err = tx.Exec(`UPDATE jobs SET last_checked_at = strftime('%s','now') WHERE status='running'`); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func tableHasColumn(tx *sql.Tx, table, column string) (bool, error) {

@@ -11,11 +11,13 @@ import type {
   Audit,
   CommandOutputChunk,
   CommandRun,
+  FeishuEnabled,
   FileEntry,
   Host,
   HostPayload,
   JobStatus,
   KeyPayload,
+  Me,
   MemoryBankStat,
   MemoryRow,
   Metric,
@@ -23,9 +25,16 @@ import type {
   Token,
   TokenPayload,
   ToolGroup,
+  UserHostsPayload,
+  UserRow,
+  UserUpdatePayload,
 } from './types'
 
 export const queryKeys = {
+  me: ['me'] as const,
+  feishuEnabled: ['auth', 'feishu', 'enabled'] as const,
+  users: ['users'] as const,
+  userHosts: (id: number) => ['users', id, 'hosts'] as const,
   hosts: ['hosts'] as const,
   keys: ['keys'] as const,
   tokens: ['tokens'] as const,
@@ -102,6 +111,53 @@ function useBatchMutation<TId>(
 }
 
 /* ── 查询 ───────────────────────────────────────────────────────── */
+
+/** 当前身份；401 由 client 广播，登录页与 AppShell 都会响应 */
+export const useMe = () =>
+  useQuery({
+    queryKey: queryKeys.me,
+    queryFn: () => api<Me>('/me'),
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+
+export const useFeishuEnabled = () =>
+  useQuery({
+    queryKey: queryKeys.feishuEnabled,
+    queryFn: () => api<FeishuEnabled>('/auth/feishu/enabled'),
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+
+export const useUsers = () =>
+  useQuery({ queryKey: queryKeys.users, queryFn: () => api<UserRow[]>('/users') })
+
+export const useLogout = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => post('/logout', {}),
+    onSuccess: () => {
+      // 换会话必须丢弃旧缓存，否则上一个身份的数据会闪现
+      qc.clear()
+    },
+  })
+}
+
+export const useUpdateUser = () =>
+  useInvalidatingMutation<UserUpdatePayload & { id: number }, UserRow>(
+    ({ id, ...payload }) => put<UserRow>(`/users/${id}`, payload),
+    queryKeys.users,
+  )
+
+export const useDeleteUser = () =>
+  useInvalidatingMutation<number, void>((id) => del(`/users/${id}`), queryKeys.users, '用户已删除')
+
+export const useSetUserHosts = () =>
+  useInvalidatingMutation<UserHostsPayload & { id: number }, unknown>(
+    ({ id, host_ids }) => put(`/users/${id}/hosts`, { host_ids }),
+    queryKeys.users,
+    '主机授权已保存',
+  )
 
 export const useHosts = () =>
   useQuery({ queryKey: queryKeys.hosts, queryFn: () => api<Host[]>('/hosts') })

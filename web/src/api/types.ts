@@ -222,3 +222,40 @@ export type OAuthDecisionPayload = {
 
 /** 无论批准还是拒绝，后端都给出下一跳；拒绝时带 error=access_denied */
 export type OAuthDecisionResult = { redirect_uri: string }
+
+/* ── 用户与会话 ─────────────────────────────────────────────────── */
+
+/** 当前登录身份：GET /me */
+export type Me = {
+  id: number
+  name: string
+  email: string
+  avatar_url: string
+  role: 'admin' | 'member'
+  source: 'local' | 'feishu'
+  is_admin: boolean
+}
+
+/** 用户管理行：GET /users（后端 User JSON + 授权主机集合） */
+export type UserRow = {
+  id: number
+  name: string
+  email: string
+  avatar_url: string
+  role: 'admin' | 'member'
+  status: 'active' | 'disabled'
+  source: 'local' | 'feishu'
+  created_at: number
+  last_login_at: { Int64: number; Valid: boolean } | null
+  host_ids: number[]
+}
+
+export type UserUpdatePayload = {
+  role?: 'admin' | 'member'
+  status?: 'active' | 'disabled'
+}
+
+export type UserHostsPayload = { host_ids: number[] }
+
+/** 飞书 SSO 是否启用：GET /auth/feishu/enabled */
+export type FeishuEnabled = { enabled: boolean }

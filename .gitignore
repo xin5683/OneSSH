@@ -7,3 +7,5 @@ web/playwright-report/
 internal/searchx/helper/assets/*.gz
 /master.key
 .env
+.zcode/
+data/

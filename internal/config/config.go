@@ -25,6 +25,8 @@ type Config struct {
 	SearchHelper    bool
 	MCPApps         bool
 	DisabledTools   toolgroups.Disabled
+	FeishuAppID     string
+	FeishuAppSecret string
 }
 
 func Load() (Config, error) {
@@ -55,6 +57,14 @@ func Load() (Config, error) {
 	cfg.Listen = envDefault("ONESSH_LISTEN", ":8866")
 	cfg.DataDir = envDefault("ONESSH_DATA_DIR", "/data")
 	cfg.PublicURL = os.Getenv("ONESSH_PUBLIC_URL")
+	cfg.FeishuAppID = strings.TrimSpace(os.Getenv("ONESSH_FEISHU_APP_ID"))
+	cfg.FeishuAppSecret = strings.TrimSpace(os.Getenv("ONESSH_FEISHU_APP_SECRET"))
+	if (cfg.FeishuAppID == "") != (cfg.FeishuAppSecret == "") {
+		return cfg, errors.New("ONESSH_FEISHU_APP_ID 与 ONESSH_FEISHU_APP_SECRET 必须同时配置")
+	}
+	if cfg.FeishuAppID != "" && cfg.PublicURL == "" {
+		return cfg, errors.New("启用飞书登录时必须配置 ONESSH_PUBLIC_URL（用于拼接回调地址）")
+	}
 	cfg.EmbeddingAPIURL = strings.TrimRight(os.Getenv("ONESSH_EMBEDDING_API_URL"), "/")
 	cfg.EmbeddingAPIKey = os.Getenv("ONESSH_EMBEDDING_API_KEY")
 	cfg.EmbeddingModel = os.Getenv("ONESSH_EMBEDDING_MODEL")

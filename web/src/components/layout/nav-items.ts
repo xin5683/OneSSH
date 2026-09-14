@@ -9,10 +9,11 @@ import {
   SquaresFour,
   Terminal,
   Ticket,
+  UserCircle,
   type Icon,
 } from '@phosphor-icons/react'
 
-export type NavItem = { to: string; label: string; icon: Icon }
+export type NavItem = { to: string; label: string; icon: Icon; adminOnly?: boolean }
 export type NavGroup = { title?: string; items: NavItem[] }
 
 export const navGroups: NavGroup[] = [
@@ -21,8 +22,9 @@ export const navGroups: NavGroup[] = [
     title: '资源',
     items: [
       { to: '/hosts', label: '主机', icon: HardDrives },
-      { to: '/keys', label: '密钥', icon: Key },
-      { to: '/tokens', label: '令牌', icon: Ticket },
+      { to: '/keys', label: '密钥', icon: Key, adminOnly: true },
+      { to: '/tokens', label: '令牌', icon: Ticket, adminOnly: true },
+      { to: '/users', label: '用户', icon: UserCircle, adminOnly: true },
     ],
   },
   {

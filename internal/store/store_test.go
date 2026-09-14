@@ -322,7 +322,7 @@ func TestOpenUpgradesLegacyDatabase(t *testing.T) {
 	if err = st.DB.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&versions); err != nil {
 		t.Fatal(err)
 	}
-	if versions != 15 {
+	if versions != 17 {
 		t.Fatalf("二次迁移版本数 = %d", versions)
 	}
 }
@@ -351,8 +351,81 @@ func TestOpenRecordsPreexistingManageHostsColumn(t *testing.T) {
 	if err = st.DB.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&versions); err != nil {
 		t.Fatal(err)
 	}
-	if versions != 15 {
+	if versions != 17 {
 		t.Fatalf("迁移登记数 = %d", versions)
+	}
+}
+
+// fork 早期把 13/14 用作多用户迁移，而上游把同样版本号用于新增列。
+// 升级后的二进制必须在已登记 13/14 的旧库上补齐上游列，否则令牌与任务查询会失败。
+func TestOpenRepairsMigrationVersionCollision(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "onessh.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`CREATE TABLE schema_migrations (
+		version INTEGER PRIMARY KEY,
+		applied_at INTEGER NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []migration{
+		{1, migration0001},
+		{2, migration0002},
+		{3, migration0003},
+		{4, migration0004},
+		{5, migration0005},
+		{6, migration0006},
+		{7, migration0007},
+		{8, migration0008},
+		{9, migration0009},
+		{10, migration0010},
+		{11, migration0011},
+		{12, migration0012},
+	} {
+		if err = applyMigration(db, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = db.Exec(`INSERT INTO schema_migrations(version,applied_at) VALUES(13,1),(14,1);
+		INSERT INTO hosts(id,name,addr,port,username,auth_type,created_at) VALUES(1,'web','127.0.0.1',22,'root','password',1);
+		INSERT INTO jobs(id,host_id,command,cwd,status,started_at) VALUES('running',1,'sleep','~','running',1000)`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatalf("修复迁移版本碰撞失败: %v", err)
+	}
+	defer st.Close()
+	for _, column := range []struct {
+		table string
+		name  string
+	}{
+		{"tokens", "disabled_tools_json"},
+		{"oauth_authorization_codes", "disabled_tools_json"},
+		{"oauth_refresh_tokens", "disabled_tools_json"},
+		{"jobs", "last_checked_at"},
+	} {
+		var count int
+		query := `SELECT count(*) FROM pragma_table_info(?) WHERE name=?`
+		if err = st.DB.QueryRow(query, column.table, column.name).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("迁移碰撞后缺少 %s.%s", column.table, column.name)
+		}
+	}
+	var checked sql.NullInt64
+	if err = st.DB.QueryRow(`SELECT last_checked_at FROM jobs WHERE id='running'`).Scan(&checked); err != nil {
+		t.Fatal(err)
+	}
+	if !checked.Valid {
+		t.Fatal("迁移碰撞后未回填运行中任务的确认时间")
 	}
 }
 
@@ -397,7 +470,7 @@ func TestOpenRecordsPreexistingAuditTokenNameColumn(t *testing.T) {
 	if err = st.DB.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&versions); err != nil {
 		t.Fatal(err)
 	}
-	if versions != 15 {
+	if versions != 17 {
 		t.Fatalf("迁移登记数 = %d", versions)
 	}
 }
@@ -426,7 +499,7 @@ func TestOpenRecordsPreexistingJobLogBytesColumn(t *testing.T) {
 	if err = st.DB.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&versions); err != nil {
 		t.Fatal(err)
 	}
-	if versions != 15 {
+	if versions != 17 {
 		t.Fatalf("迁移登记数 = %d", versions)
 	}
 }
@@ -522,7 +595,7 @@ func TestOpenAddsMissingCommandRunOutputCleanedColumn(t *testing.T) {
 	if err = st.DB.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&versions); err != nil {
 		t.Fatal(err)
 	}
-	if versions != 15 {
+	if versions != 17 {
 		t.Fatalf("迁移登记数 = %d", versions)
 	}
 	var cleanedColumns int
@@ -559,7 +632,7 @@ func TestOpenRecordsPreexistingAuditCommandRunIDsColumn(t *testing.T) {
 	if err = st.DB.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&versions); err != nil {
 		t.Fatal(err)
 	}
-	if versions != 15 {
+	if versions != 17 {
 		t.Fatalf("迁移登记数 = %d", versions)
 	}
 	audit, err := st.ListAudit(context.Background(), nil, nil, nil, nil, 0, 10)

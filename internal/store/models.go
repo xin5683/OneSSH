@@ -10,6 +10,22 @@ type Key struct {
 	CreatedAt     int64  `json:"created_at"`
 }
 
+// User 是 Web 控制台账号。source=local 是密码登录映射的内置管理员（迁移 0013 固定 id=1），
+// source=feishu 由 SSO 首次登录自动建号。open_id/union_id 不出 API，防止被当作用户枚举键。
+type User struct {
+	ID            int64          `json:"id"`
+	Name          string         `json:"name"`
+	Email         string         `json:"email"`
+	AvatarURL     string         `json:"avatar_url"`
+	FeishuOpenID  sql.NullString `json:"-"`
+	FeishuUnionID sql.NullString `json:"-"`
+	Role          string         `json:"role"`
+	Status        string         `json:"status"`
+	Source        string         `json:"source"`
+	CreatedAt     int64          `json:"created_at"`
+	LastLoginAt   sql.NullInt64  `json:"last_login_at"`
+}
+
 type Host struct {
 	ID             int64          `json:"id"`
 	Name           string         `json:"name"`

@@ -19,8 +19,12 @@ type terminalMessage struct {
 
 func (a *API) terminal(w http.ResponseWriter, r *http.Request) {
 	host := r.URL.Query().Get("host")
-	if _, err := a.Store.GetHostByName(r.Context(), host); err != nil {
+	h, err := a.Store.GetHostByName(r.Context(), host)
+	if err != nil {
 		apiError(w, 404, err)
+		return
+	}
+	if !a.requireHostAuthorization(w, r, h.ID) {
 		return
 	}
 	client, err := a.Pool.Get(r.Context(), host)

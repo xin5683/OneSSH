@@ -312,15 +312,47 @@ WebUI 的「活动」页会为每次 `exec`、`job_start`，以及 `exec_many` �
 
 `manage_hosts` 是一项独立的全局配置管理权限，默认关闭。开启后可以维护全部 SSH 目标，但**既不扩大执行范围，也不会把新建的目标自动加进该令牌的授权列表**。主机密码经管理工具只写不读；所有管理调用和权限拒绝都会写入审计，密码参数固定脱敏。
 
+## 飞书登录与多用户
+
+除管理员密码外，OneSSH 支持用飞书账号登录控制台（网页应用 SSO，OAuth 2.0 授权码模式，`golang.org/x/oauth2` 标准实现 + v3 token 端点）。启用后进入两级角色模型：
+
+| 能力 | admin | member |
+|---|---|---|
+| 主机/密钥/令牌/用户的增删改 | ✅ | ❌ |
+| MCP OAuth 同意页（给 Agent 客户端放权） | ✅ | ❌ |
+| 终端 / 文件 / 任务 / 指标 / 记忆 / 概览 / 活动 | 全部主机 | 仅被授权的主机 |
+
+- **自动建号**：飞书应用「可用范围」内的成员首次登录即创建账号（member）；**第一个登录的飞书用户自动成为 admin**，之后可在「用户」页调整角色、禁用或删除。外层由飞书可用范围把关，范围外的成员无法完成授权。
+- **管理入口**：「用户」页（仅 admin 可见）提供角色切换、禁用/启用（禁用立即踢下线）、删除与按主机的授权编辑。
+- **密码登录保留**：`ONESSH_ADMIN_PASSWORD` 始终映射到内置本地管理员（不受飞书侧故障影响，不可被禁用或删除），作为兜底通道。
+
+### 飞书侧配置
+
+1. 在[飞书开放平台](https://open.feishu.cn/app)创建**企业自建应用**，记下 `App ID` 与 `App Secret`。
+2. 安全设置 → **重定向 URL** 白名单添加：`https://<你的域名>/api/v1/auth/feishu/callback`（必须与 `ONESSH_PUBLIC_URL` 一致，协议/域名/端口都要对上）。
+3. 权限管理申请**获取用户基本信息**（`authen:v1.user_info` 所需）。
+4. 配置应用**可用范围**（允许哪些成员登录），发布版本。
+5. 给 OneSSH 传环境变量：
+
+```sh
+ONESSH_PUBLIC_URL=https://ssh.example.com          # 启用飞书登录时必填
+ONESSH_FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxx
+ONESSH_FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+未配置这两个变量时行为与单用户版完全一致，登录页不显示飞书入口。登录流程不落地飞书的 `user_access_token`（取完身份即弃），会话仍由 OneSSH 自己签发。
+
 ## 配置
 
 | 变量 | 必填 | 默认值 | 说明 |
 |---|:---:|---|---|
 | `ONESSH_MASTER_KEY` | * | — | 64 位十六进制字符串，即 32 字节主密钥 |
 | `ONESSH_MASTER_KEY_FILE` | * | — | 主密钥文件路径，内容同上（允许首尾空白与换行）；适合 Docker secrets、systemd credential 等只读文件注入，避免明文出现在环境变量 |
-| `ONESSH_ADMIN_PASSWORD` | ✅ | — | WebUI 管理员密码 |
+| `ONESSH_ADMIN_PASSWORD` | ✅ | — | WebUI 管理员密码；映射到内置本地管理员，飞书登录启用后仍可作兜底登录 |
 | `ONESSH_LISTEN` | | `:8866` | HTTP 监听地址 |
-| `ONESSH_PUBLIC_URL` | | 按请求推导 | 对外访问来源，如 `https://ssh.example.com`；生产 OAuth 部署应显式设置，同时决定是否发布 MCP 服务器图标 |
+| `ONESSH_PUBLIC_URL` | | 按请求推导 | 对外访问来源，如 `https://ssh.example.com`；生产 OAuth 部署应显式设置，同时决定是否发布 MCP 服务器图标；启用飞书登录时必填（用于拼接回调地址） |
+| `ONESSH_FEISHU_APP_ID` | | — | 飞书自建应用 App ID；与 App Secret 必须同时配置，缺省时关闭飞书登录 |
+| `ONESSH_FEISHU_APP_SECRET` | | — | 飞书自建应用 App Secret |
 | `ONESSH_DATA_DIR` | | `/data` | SQLite 与 artifact 数据目录 |
 | `ONESSH_POLL_INTERVAL` | | `60` | 监控轮询秒数，设为 `0` 关闭；单轮最多并发采样 5 台，上一轮未结束时跳过新一轮 |
 | `ONESSH_MCP_APPS` | | `on` | `on` 为全部工具发布 MCP Apps 交互卡片资源与 `_meta.ui`；`off` 完全关闭卡片 |
@@ -477,7 +509,8 @@ docker pull lynricsy/onessh:latest
 
 **Web 会话**
 
-- WebUI 使用 24 小时 HMAC Cookie，OAuth 同意页复用同一个管理员会话。
+- WebUI 会话为 24 小时服务端会话：cookie 只携带随机值，库内仅存其 SHA-256 哈希；登出、禁用用户即时失效。飞书 SSO 回调与 OAuth 同意页复用同一套会话。
+- 飞书 OAuth 登录带 `state`（单次消费、10 分钟过期）；`client_secret` 只随服务端 token 交换发送，`return_to` 只接受站内相对路径。飞书 v1 authorize 与 v3 token 端点的 PKCE 配对暂未开放（`code_verifier` 会得到 20049），机密客户端按 v3 文档以 `client_secret` 鉴权，安全性等价。
 - WebUI 的每一个响应（含登录页与 OAuth 同意页）都带 `Content-Security-Policy: frame-ancestors 'none'` 与 `X-Frame-Options: DENY`，阻断第三方页面嵌入发起的点击劫持。
 - 生产环境必须通过 HTTPS 反向代理访问。
 

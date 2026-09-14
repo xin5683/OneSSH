@@ -44,7 +44,7 @@ func TestMemoryAdminAPIListFilterStatsAndDelete(t *testing.T) {
 	hostMemoryID := add(store.Memory{HostID: hostID, Content: "nginx 主机部署目录"})
 	add(store.Memory{HostID: hostID, Content: "database 主机备份目录"})
 
-	api := NewAPI(st, nil, nil, nil, nil, nil, nil, nil, memoryx.New(st, memoryx.EmbeddingConfig{}), nil).Handler()
+	api := serveAsAdmin(t, st, NewAPI(st, nil, nil, nil, nil, nil, nil, nil, memoryx.New(st, memoryx.EmbeddingConfig{}), nil).Handler())
 	call := func(method, path string) *httptest.ResponseRecorder {
 		t.Helper()
 		request := httptest.NewRequest(method, path, nil)

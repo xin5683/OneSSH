@@ -135,6 +135,27 @@ func (s *Store) DeleteHost(ctx context.Context, id int64) error {
 	}
 	return tx.Commit()
 }
+
+// ListHostsForUser 是 member 视角的主机列表：只含 user_hosts 授权的主机。
+// admin 走 ListHosts 全量，不进此函数。
+func (s *Store) ListHostsForUser(ctx context.Context, userID int64) ([]Host, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT h.id,h.name,h.addr,h.port,h.username,h.auth_type,h.key_id,h.password_enc,h.hostkey_fp,h.jump_host_id,h.monitor_enabled,h.created_at,h.tags,h.archived_at
+		FROM hosts h JOIN user_hosts uh ON uh.host_id=h.id WHERE uh.user_id=? ORDER BY h.name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Host, 0)
+	for rows.Next() {
+		x, err := scanHost(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+hostColumns+` FROM hosts ORDER BY name`)
 	if err != nil {

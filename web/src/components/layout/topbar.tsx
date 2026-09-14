@@ -1,10 +1,16 @@
-import { Check, Desktop, HardDrives, List, Moon, Sun } from '@phosphor-icons/react'
-import { Link, useLocation } from 'react-router-dom'
+import { Check, Desktop, HardDrives, List, Moon, SignOut, Sun, UserCircle } from '@phosphor-icons/react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
+import { post } from '@/api/client'
+import { useMe } from '@/api/queries'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useTheme, type ThemeMode } from '@/lib/theme'
@@ -18,9 +24,23 @@ const modes: { value: ThemeMode; label: string; icon: React.ReactNode }[] = [
 
 export function Topbar({ hostCount, onOpenNav }: { hostCount: number; onOpenNav: () => void }) {
   const { pathname } = useLocation()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const { mode, resolved, setMode } = useTheme()
+  const { data: me } = useMe()
   const current =
     mode === 'system' ? <Desktop size={16} /> : resolved === 'dark' ? <Moon size={16} /> : <Sun size={16} />
+
+  const signOut = async () => {
+    try {
+      await post('/logout', {})
+    } catch {
+      // 会话已失效时登出仍要继续走本地清理
+    }
+    queryClient.clear()
+    navigate('/login', { replace: true })
+    toast.success('已退出登录')
+  }
 
   return (
     <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-bg px-4 md:px-8">
@@ -62,6 +82,40 @@ export function Topbar({ hostCount, onOpenNav }: { hostCount: number; onOpenNav:
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        {me && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="ml-1 flex items-center gap-2 rounded-full py-0.5 pr-2 pl-0.5 transition-colors hover:bg-surface-2"
+                aria-label="用户菜单"
+              >
+                {me.avatar_url ? (
+                  <img src={me.avatar_url} alt="" className="size-7 rounded-full object-cover" />
+                ) : (
+                  <UserCircle size={28} weight="fill" className="text-muted" />
+                )}
+                <span className="hidden max-w-32 truncate text-[12px] text-text sm:inline">{me.name}</span>
+                <Badge variant={me.role === 'admin' ? 'accent' : 'default'}>
+                  {me.role === 'admin' ? '管理员' : '成员'}
+                </Badge>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <div className="px-2 py-1.5">
+                <p className="text-[13px] font-medium text-text">{me.name}</p>
+                <p className="text-[12px] text-muted">
+                  {me.source === 'feishu' ? '飞书账号' : '本地账号'}
+                  {me.email ? ` · ${me.email}` : ''}
+                </p>
+              </div>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={signOut}>
+                <SignOut size={15} />
+                退出登录
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
     </header>
   )

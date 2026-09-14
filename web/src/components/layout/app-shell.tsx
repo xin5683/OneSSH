@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
-import { useHosts } from '@/api/queries'
+import { useHosts, useMe } from '@/api/queries'
 import { LogoTile } from '@/components/brand/logo'
 import { Sheet } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
@@ -12,6 +12,7 @@ const SIDEBAR_KEY = 'onessh-sidebar'
 export function AppShell() {
   const { pathname } = useLocation()
   const hosts = useHosts()
+  const me = useMe()
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(SIDEBAR_KEY) === 'collapsed')
   const [navOpen, setNavOpen] = useState(false)
 
@@ -21,8 +22,9 @@ export function AppShell() {
       return !prev
     })
 
-  // 首次拉取 /hosts 兼作鉴权探针：401 会由 client 广播事件，AuthGuard 负责跳转
-  if (hosts.isLoading) {
+  // 首次拉取 /me 兼作鉴权探针：401 会由 client 广播事件，AuthGuard 负责跳转。
+  // 不能用 /hosts 探活：member 的主机列表可能合法地为空， isLoading 结束 ≠ 已鉴权。
+  if (me.isLoading || hosts.isLoading) {
     return (
       <div className="flex h-dvh flex-col items-center justify-center gap-4 bg-bg">
         <LogoTile className="size-11" />
