@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"unicode/utf16"
 )
 
 // 用独立的变量名前缀,避免与真实 ONESSH_* 配置或其他用例互相干扰。
@@ -59,5 +60,61 @@ func TestLoadDotEnvBrokenFile(t *testing.T) {
 
 	if got := os.Getenv(dotenvTestPrefix + "BROKEN"); got != "" {
 		t.Errorf("解析失败的 .env 不应设置任何变量: %sBROKEN = %q", dotenvTestPrefix, got)
+	}
+}
+
+func TestLoadDotEnvFallsBackToExecutableDirectory(t *testing.T) {
+	cwd := t.TempDir()
+	executableDir := t.TempDir()
+	name := dotenvTestPrefix + "EXE_DIR"
+	content := []byte(name + "=from-exe-dir\n")
+	if err := os.WriteFile(filepath.Join(executableDir, ".env"), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Unsetenv(name) })
+
+	if !loadDotEnvFromPaths([]string{filepath.Join(cwd, ".env"), filepath.Join(executableDir, ".env")}) {
+		t.Fatal("未找到可执行文件目录中的 .env")
+	}
+	if got := os.Getenv(name); got != "from-exe-dir" {
+		t.Fatalf("%s = %q, 期望 \"from-exe-dir\"", name, got)
+	}
+}
+
+func TestLoadDotEnvSupportsUTF8AndUTF16BOM(t *testing.T) {
+	name := dotenvTestPrefix + "BOM"
+	t.Cleanup(func() { os.Unsetenv(name) })
+
+	tests := map[string]struct {
+		content []byte
+		want    string
+	}{
+		"utf8": {
+			content: append([]byte{0xEF, 0xBB, 0xBF}, []byte(name+"=utf8\n")...),
+			want:    "utf8",
+		},
+	}
+	utf16LE := []byte{0xFF, 0xFE}
+	for _, unit := range utf16.Encode([]rune(name + "=utf16\n")) {
+		utf16LE = append(utf16LE, byte(unit), byte(unit>>8))
+	}
+	tests["utf16le"] = struct {
+		content []byte
+		want    string
+	}{content: utf16LE, want: "utf16"}
+
+	for label, tt := range tests {
+		t.Run(label, func(t *testing.T) {
+			os.Unsetenv(name)
+			dir := t.TempDir()
+			path := filepath.Join(dir, ".env")
+			if err := os.WriteFile(path, tt.content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			loadDotEnvFromPaths([]string{path})
+			if got := os.Getenv(name); got != tt.want {
+				t.Fatalf("%s = %q, 期望 %q", name, got, tt.want)
+			}
+		})
 	}
 }

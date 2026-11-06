@@ -362,7 +362,7 @@ ONESSH_FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxx
 | `ONESSH_EMBEDDING_API_KEY` | | — | embedding 服务 Bearer 密钥；服务不需要鉴权时可留空 |
 | `ONESSH_EMBEDDING_MODEL` | | — | embedding 模型名；换模型后旧向量自然不参与召回 |
 
-这些变量也可以写进启动目录的 `.env` 文件（模板见 `.env.example`），程序启动时自动加载；格式为 `KEY=value`，支持 `#` 注释、引号与 `export` 前缀。已 export 的真实环境变量优先，`.env` 不会覆盖已有值。Docker Compose 部署时，`docker-compose.yml` 旁边的 `.env` 会被 Compose 自动读取用于 `${...}` 插值。
+这些变量也可以写进启动目录或可执行文件同目录的 `.env` 文件（模板见 `.env.example`），程序启动时自动加载；格式为 `KEY=value`，支持 `#` 注释、引号、`export` 前缀及 Windows 常见的 UTF-8/UTF-16 BOM。查找顺序为 `ONESSH_ENV_FILE` 指定的文件、启动目录的 `.env`、可执行文件同目录的 `.env`，只加载第一个存在的文件。启动日志会打印实际加载的文件路径、应用项数，以及被已有环境变量覆盖的键名。已 export 的真实环境变量优先，`.env` 不会覆盖已有值；Windows 快捷方式、计划任务等无法确定工作目录的场景可用 `ONESSH_ENV_FILE` 指定绝对路径。Docker Compose 部署时，`docker-compose.yml` 旁边的 `.env` 会被 Compose 自动读取用于 `${...}` 插值。
 
 生成主密钥：
 

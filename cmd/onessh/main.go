@@ -2,13 +2,10 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/joho/godotenv"
 
 	"onessh/internal/config"
 	"onessh/internal/cryptox"
@@ -120,16 +117,4 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.New(os.Stderr, "", 0).Fatal(err)
 	}
-}
-
-// loadDotEnv 加载当前工作目录的 .env;godotenv.Load 不会覆盖已存在的环境变量,
-// 真实环境变量始终优先。文件不存在属正常情况;解析失败只告警,不阻断启动。
-func loadDotEnv() {
-	if err := godotenv.Load(); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			log.Printf("忽略无法解析的当前目录 .env: %v", err)
-		}
-		return
-	}
-	log.Printf("已加载当前目录的 .env 配置")
 }
