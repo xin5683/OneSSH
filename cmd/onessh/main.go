@@ -3,8 +3,8 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
-	"os"
 	"time"
 
 	"onessh/internal/config"
@@ -112,9 +112,14 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "version": version})
 	})
 	mux.Handle("/", web.Handler())
-	server := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	log.Printf("OneSSH %s 监听 %s", version, cfg.Listen)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.New(os.Stderr, "", 0).Fatal(err)
+	listener, err := net.Listen("tcp", cfg.Listen)
+	if err != nil {
+		log.Fatal(listenFailureMessage(cfg.Listen, err))
+	}
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	log.Printf("OneSSH %s 已监听 %s", version, listener.Addr())
+	log.Printf("浏览器打开: %s", browserURL(listener.Addr().String()))
+	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
 	}
 }

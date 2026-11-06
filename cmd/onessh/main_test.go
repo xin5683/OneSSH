@@ -118,3 +118,21 @@ func TestLoadDotEnvSupportsUTF8AndUTF16BOM(t *testing.T) {
 		})
 	}
 }
+
+func TestBrowserURL(t *testing.T) {
+	tests := map[string]string{
+		"127.0.0.1:18866": "http://127.0.0.1:18866",
+		":18866":          "http://127.0.0.1:18866",
+		"0.0.0.0:18866":   "http://127.0.0.1:18866",
+		"[::]:18866":      "http://127.0.0.1:18866",
+		"[::1]:18866":     "http://[::1]:18866",
+		"192.168.1.8:80":  "http://192.168.1.8:80",
+	}
+	for address, want := range tests {
+		t.Run(address, func(t *testing.T) {
+			if got := browserURL(address); got != want {
+				t.Fatalf("browserURL(%q) = %q, 期望 %q", address, got, want)
+			}
+		})
+	}
+}
