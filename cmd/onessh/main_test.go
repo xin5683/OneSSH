@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 	"unicode/utf16"
 )
@@ -134,5 +136,14 @@ func TestBrowserURL(t *testing.T) {
 				t.Fatalf("browserURL(%q) = %q, 期望 %q", address, got, want)
 			}
 		})
+	}
+}
+
+func TestListenFailureMessageAddressInUse(t *testing.T) {
+	message := listenFailureMessage("127.0.0.1:18866", syscall.EADDRINUSE)
+	for _, want := range []string{"无法监听 127.0.0.1:18866", "端口已被占用", "ONESSH_LISTEN"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("监听失败日志缺少 %q:\n%s", want, message)
+		}
 	}
 }
