@@ -62,6 +62,21 @@ function copyByExecCommand(text: string) {
   return ok
 }
 
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    return copyByExecCommand(text)
+  }
+}
+
+/** 令牌页最常见的目的不是手工拼配置，而是让 Agent 自己完成 MCP 注册。 */
+function agentSetupPrompt(token: string) {
+  const endpoint = new URL('/mcp', window.location.origin).toString()
+  return `请通过 Streamable HTTP 添加名为 onessh 的 MCP 服务：URL 为 ${endpoint}，请求头为 Authorization: Bearer ${token}。添加后调用一次 hosts_list 验证连接，不要回显令牌。`
+}
+
 /**
  * 「全部主机」是权限状态，用强调色 badge；具体主机名是数据不是状态，
  * 用文本枚举——十几台主机时比一串 badge 更易读，也不会跟状态色抢注意力。
@@ -239,13 +254,16 @@ export function TokensPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<Token | null>(null)
   const [plainToken, setPlainToken] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
+  const [tokenCopied, setTokenCopied] = useState(false)
+  const [promptCopied, setPromptCopied] = useState(false)
   const [deleting, setDeleting] = useState<Token | null>(null)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [batchDeleting, setBatchDeleting] = useState(false)
   const plainRef = useRef<HTMLElement>(null)
+  const promptRef = useRef<HTMLElement>(null)
   const form = useForm<TokenFormValues>({ defaultValues })
   const { handleSubmit, reset } = form
+  const setupPrompt = plainToken ? agentSetupPrompt(plainToken) : ''
 
   const openCreate = () => {
     reset(defaultValues)
@@ -269,7 +287,8 @@ export function TokensPage() {
     const created = await createToken.mutateAsync(toPayload(values))
     setCreateOpen(false)
     reset(defaultValues)
-    setCopied(false)
+    setTokenCopied(false)
+    setPromptCopied(false)
     setPlainToken(created.token ?? '')
   }
 
@@ -303,18 +322,36 @@ export function TokensPage() {
 
   const copyPlainToken = async () => {
     if (!plainToken) return
-    try {
-      await navigator.clipboard.writeText(plainToken)
-    } catch {
-      if (!copyByExecCommand(plainToken)) {
-        selectPlainToken()
-        toast.error('无法访问剪贴板，已选中明文，请按 Ctrl/⌘ + C 复制')
-        return
-      }
+    if (!(await copyText(plainToken))) {
+      selectPlainToken()
+      toast.error('无法访问剪贴板，已选中明文，请按 Ctrl/⌘ + C 复制')
+      return
     }
-    setCopied(true)
+    setTokenCopied(true)
     toast.success('令牌已复制')
-    window.setTimeout(() => setCopied(false), 1800)
+    window.setTimeout(() => setTokenCopied(false), 1800)
+  }
+
+  const selectSetupPrompt = () => {
+    const el = promptRef.current
+    if (!el) return
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  }
+
+  const copySetupPrompt = async () => {
+    if (!setupPrompt) return
+    if (!(await copyText(setupPrompt))) {
+      selectSetupPrompt()
+      toast.error('无法访问剪贴板，已选中提示词，请按 Ctrl/⌘ + C 复制')
+      return
+    }
+    setPromptCopied(true)
+    toast.success('接入提示词已复制，可以发给 Agent 了')
+    window.setTimeout(() => setPromptCopied(false), 1800)
   }
 
   const columns: Column<Token>[] = [
@@ -548,7 +585,12 @@ export function TokensPage() {
 
       <Dialog
         open={plainToken !== null}
-        onOpenChange={(open) => !open && setPlainToken(null)}
+        onOpenChange={(open) => {
+          if (open) return
+          setPlainToken(null)
+          setTokenCopied(false)
+          setPromptCopied(false)
+        }}
         size="md"
         title="令牌已创建"
         footer={
@@ -577,23 +619,54 @@ export function TokensPage() {
             </code>
           </div>
 
-          {/* 这一步唯一要做的事就是复制：按钮做成弹层里最重的一块，并抢到初始焦点（回车即复制），「我已保存」退成 outline */}
+          <div className="space-y-1.5">
+            <div>
+              <p className="text-[12px] text-muted">给 Agent 的接入提示词</p>
+              <p className="mt-0.5 text-[11px] text-muted/80">直接复制发给 Agent，由它完成 MCP 注册和验证。</p>
+            </div>
+            <code
+              ref={promptRef}
+              onClick={selectSetupPrompt}
+              className="block cursor-text rounded-[8px] bg-surface-2 px-3 py-2.5 font-mono text-[12px] leading-relaxed break-words whitespace-pre-wrap text-text select-all"
+            >
+              {setupPrompt}
+            </code>
+          </div>
+
+          {/* 接入提示词是创建令牌后的主要动作，抢到初始焦点；原文复制保留给需要手工配置的客户端 */}
           <Button
             autoFocus
             variant="primary"
             size="lg"
             className="w-full"
-            onClick={() => void copyPlainToken()}
+            onClick={() => void copySetupPrompt()}
           >
-            {copied ? (
+            {promptCopied ? (
               <>
                 <Check size={16} weight="bold" />
-                已复制到剪贴板
+                接入提示词已复制
               </>
             ) : (
               <>
                 <Copy size={16} />
-                复制令牌
+                复制接入提示词
+              </>
+            )}
+          </Button>
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => void copyPlainToken()}
+          >
+            {tokenCopied ? (
+              <>
+                <Check size={16} weight="bold" />
+                令牌已复制
+              </>
+            ) : (
+              <>
+                <Copy size={16} />
+                仅复制令牌明文
               </>
             )}
           </Button>
