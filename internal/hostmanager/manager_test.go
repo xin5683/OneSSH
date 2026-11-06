@@ -76,6 +76,60 @@ func TestPasswordCreateUpdateAndSafeOutput(t *testing.T) {
 	}
 }
 
+func TestKeyAuthenticationWithPasswordFallback(t *testing.T) {
+	ctx := context.Background()
+	manager, st, _ := newTestManager(t)
+	key, err := st.CreateKey(ctx, "fallback-key", []byte("encrypted"), "ssh-ed25519 test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := manager.Create(ctx, Input{
+		Name: "key-with-password", Addr: "127.0.0.1", Port: 22, Username: "user",
+		AuthType: "key", KeyID: &key.ID, Password: new("fallback-secret"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.View().HasPassword {
+		t.Fatal("组合认证主机应在视图中标记已保存兜底密码")
+	}
+	stored, err := st.GetHost(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.KeyID.Valid || stored.KeyID.Int64 != key.ID {
+		t.Fatalf("密钥引用未保存: %#v", stored.KeyID)
+	}
+	if len(stored.PasswordEnc) == 0 || bytes.Equal(stored.PasswordEnc, []byte("fallback-secret")) {
+		t.Fatalf("兜底密码未加密保存: %q", stored.PasswordEnc)
+	}
+	passwordCiphertext := append([]byte(nil), stored.PasswordEnc...)
+
+	updated, err := manager.Update(ctx, created.ID, Input{
+		Name: "key-with-password", Addr: "127.0.0.1", Port: 22, Username: "user",
+		AuthType: "key", KeyID: &key.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err = st.GetHost(ctx, updated.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored.PasswordEnc, passwordCiphertext) || !updated.View().HasPassword {
+		t.Fatal("未提供新密码时应保留已有兜底密码")
+	}
+
+	raw, err := json.Marshal(updated.View())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "fallback-secret") || strings.Contains(string(raw), "password_enc") {
+		t.Fatalf("公开 JSON 泄漏兜底密码: %s", raw)
+	}
+}
+
 func TestValidationAndErrorKinds(t *testing.T) {
 	ctx := context.Background()
 	manager, st, _ := newTestManager(t)

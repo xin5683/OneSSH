@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"database/sql"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net"
@@ -422,6 +423,117 @@ func TestPasswordAuthenticationHandshake(t *testing.T) {
 			t.Fatalf("回退握手 = %v，password = %d，keyboard-interactive = %d", err, passwordAttempts, keyboardAttempts)
 		}
 	})
+}
+
+func TestKeyAuthenticationFallsBackToPassword(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	box, err := cryptox.New(bytes.Repeat([]byte{11}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, clientPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientSigner, err := ssh.NewSignerFromKey(clientPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientBlock, err := ssh.MarshalPrivateKey(clientPrivate, "fallback-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientPEM := pem.EncodeToMemory(clientBlock)
+	encryptedKey, err := box.Seal(clientPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := st.CreateKey(ctx, "fallback-key", encryptedKey, string(ssh.MarshalAuthorizedKey(clientSigner.PublicKey())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedPassword, err := box.Seal([]byte(testPassword))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, serverPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverSigner, err := ssh.NewSignerFromKey(serverPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKeyAttempts, passwordAttempts := 0, 0
+	serverConfig := &ssh.ServerConfig{
+		PublicKeyCallback: func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error) {
+			publicKeyAttempts++
+			return nil, errors.New("public key rejected for fallback test")
+		},
+		PasswordCallback: func(_ ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+			passwordAttempts++
+			if string(password) != testPassword {
+				return nil, errors.New("wrong password")
+			}
+			return nil, nil
+		},
+	}
+	serverConfig.AddHostKey(serverSigner)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		rawConn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		conn, channels, requests, handshakeErr := ssh.NewServerConn(rawConn, serverConfig)
+		if handshakeErr != nil {
+			rawConn.Close()
+			return
+		}
+		defer conn.Close()
+		go ssh.DiscardRequests(requests)
+		for channel := range channels {
+			_ = channel.Reject(ssh.UnknownChannelType, "test")
+		}
+	}()
+	t.Cleanup(func() {
+		listener.Close()
+		select {
+		case <-serverDone:
+		case <-time.After(2 * time.Second):
+		}
+		st.Close()
+	})
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	if _, err = st.CreateHost(ctx, store.Host{
+		Name: "fallback", Addr: "127.0.0.1", Port: port, Username: "test",
+		AuthType: "key", KeyID: sql.NullInt64{Int64: key.ID, Valid: true}, PasswordEnc: encryptedPassword,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pool := New(st, box)
+	t.Cleanup(pool.Close)
+	client, err := pool.Get(ctx, "fallback")
+	if err != nil {
+		t.Fatalf("密钥被拒后未回退到密码: %v", err)
+	}
+	if client == nil {
+		t.Fatal("组合认证返回了空客户端")
+	}
+	if publicKeyAttempts != 1 || passwordAttempts != 1 {
+		t.Fatalf("认证尝试次数异常: publickey=%d password=%d", publicKeyAttempts, passwordAttempts)
+	}
 }
 
 func TestPasswordAuthenticationRejectsMultiFactorContinuation(t *testing.T) {

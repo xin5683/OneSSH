@@ -37,8 +37,8 @@ type HostUpdateInput struct {
 	Port           int      `json:"port" jsonschema:"SSH 端口，0 视为 22"`
 	Username       string   `json:"username" jsonschema:"SSH 登录用户名"`
 	AuthType       string   `json:"auth_type" jsonschema:"认证方式：key 或 password"`
-	KeyID          *int64   `json:"key_id,omitempty" jsonschema:"key 认证使用的密钥 ID，auth_type=key 时必填"`
-	Password       *string  `json:"password,omitempty" jsonschema:"新的登录密码；auth_type 保持 password 且沿用原密码时可省略"`
+	KeyID          *int64   `json:"key_id,omitempty" jsonschema:"key 认证使用的密钥 ID，auth_type 为 key 时必填"`
+	Password       *string  `json:"password,omitempty" jsonschema:"新的登录密码；auth_type 为 password 时必填，保持原密码时可省略。auth_type 为 key 时可作为密钥失败后的兜底密码"`
 	JumpHost       string   `json:"jump_host,omitempty" jsonschema:"跳板主机名，留空表示直连；整体替换语义下省略即清除原跳板配置"`
 	MonitorEnabled *bool    `json:"monitor_enabled,omitempty" jsonschema:"是否纳入后台资源监控轮询，省略表示保持原值"`
 	Tags           []string `json:"tags,omitempty" jsonschema:"主机标签，用于分组与筛选；整体替换语义下省略即清空标签"`
@@ -52,6 +52,7 @@ type ManagedHostItem struct {
 	Username       string   `json:"username"`
 	AuthType       string   `json:"auth_type"`
 	KeyID          *int64   `json:"key_id"`
+	HasPassword    bool     `json:"has_password"`
 	HostKeyFP      *string  `json:"hostkey_fp"`
 	JumpHost       *string  `json:"jump_host"`
 	MonitorEnabled bool     `json:"monitor_enabled"`
@@ -82,7 +83,7 @@ func (s *Server) registerHosts() {
 	register[hostmanager.Input, ManagedHostItem](s, &mcp.Tool{
 		Name:        "host_create",
 		Title:       "新增主机配置",
-		Description: "新增一台 SSH 主机配置。auth_type=key 必须给 key_id，auth_type=password 必须给 password；port 省略按 22 处理，name 必须唯一。只写入配置、不建立连接，创建后用 host_test 验证凭据并固定主机公钥指纹。新主机不会自动加入当前令牌的授权列表。可选 jump_host 指定跳板主机名，连接经该主机中转，支持最多 5 级链但不允许成环。需要 manage_hosts 权限。",
+		Description: "新增一台 SSH 主机配置。auth_type=key 必须给 key_id，并可同时给 password 作为密钥被拒绝后的兜底；auth_type=password 必须给 password；port 省略按 22 处理，name 必须唯一。只写入配置、不建立连接，创建后用 host_test 验证凭据并固定主机公钥指纹。新主机不会自动加入当前令牌的授权列表。可选 jump_host 指定跳板主机名，连接经该主机中转，支持最多 5 级链但不允许成环。需要 manage_hosts 权限。",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: new(false), IdempotentHint: false, OpenWorldHint: new(false)},
 	}, s.hostCreate)
 	register[HostUpdateInput, ManagedHostItem](s, &mcp.Tool{
@@ -232,7 +233,7 @@ func (s *Server) managedHostItem(ctx context.Context, host store.Host) ManagedHo
 	view := host.View()
 	item := ManagedHostItem{
 		ID: view.ID, Name: view.Name, Addr: view.Addr, Port: view.Port, Username: view.Username,
-		AuthType: view.AuthType, KeyID: view.KeyID, HostKeyFP: view.HostKeyFP,
+		AuthType: view.AuthType, KeyID: view.KeyID, HasPassword: view.HasPassword, HostKeyFP: view.HostKeyFP,
 		MonitorEnabled: view.MonitorEnabled, Tags: view.Tags, CreatedAt: view.CreatedAt, Online: s.Pool.IsOnline(host.Name), Archived: view.Archived,
 	}
 	if host.JumpHostID.Valid {

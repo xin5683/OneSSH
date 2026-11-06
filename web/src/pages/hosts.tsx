@@ -185,6 +185,18 @@ export function HostsPage() {
     formState: { errors },
   } = useForm<HostPayload>({ defaultValues: emptyForm, shouldUnregister: true })
   const authType = watch('auth_type')
+  const passwordRequired =
+    authType === 'password' && (!editing || editing.auth_type !== 'password')
+  const passwordHint =
+    authType === 'key'
+      ? editing?.has_password
+        ? '已设置密码兜底；留空保持不变'
+        : '可选：密钥被服务端拒绝后改用密码'
+      : editing
+        ? editing.auth_type === 'password'
+          ? '留空则不修改'
+          : '切换为密码认证时必填'
+        : undefined
 
   // 列表一次拉全量且无服务端分页，过滤全部在前端本地做，改动即生效、不发请求
   const [query, setQuery] = useState('')
@@ -261,7 +273,7 @@ export function HostsPage() {
     const base = { ...values, jump_host: values.jump_host || undefined }
     const payload: HostPayload =
       values.auth_type === 'key'
-        ? { ...base, password: undefined }
+        ? { ...base, password: values.password || undefined }
         : { ...base, key_id: undefined, password: values.password || undefined }
     await save.mutateAsync(payload)
     setDialogOpen(false)
@@ -330,7 +342,11 @@ export function HostsPage() {
       className: 'w-[112px]',
       render: (host) => (
         <span className="text-[13px] text-muted">
-          {host.auth_type === 'key' ? 'SSH 密钥' : '密码'}
+          {host.auth_type === 'key'
+            ? host.has_password
+              ? '密钥 + 密码'
+              : 'SSH 密钥'
+            : '密码'}
         </span>
       ),
     },
@@ -543,7 +559,13 @@ export function HostsPage() {
               {/* 窄屏没有表头，用定值标签列把属性对齐成一张迷你规格表 */}
               <dl className="mt-3 grid grid-cols-[52px_minmax(0,1fr)] items-center gap-y-2 text-[12px]">
                 <dt className="text-muted">认证</dt>
-                <dd className="text-text">{host.auth_type === 'key' ? 'SSH 密钥' : '密码'}</dd>
+                <dd className="text-text">
+                  {host.auth_type === 'key'
+                    ? host.has_password
+                      ? '密钥 + 密码'
+                      : 'SSH 密钥'
+                    : '密码'}
+                </dd>
                 <dt className="text-muted">标签</dt>
                 <dd className="min-w-0">
                   <TagsCell host={host} />
@@ -646,7 +668,7 @@ export function HostsPage() {
             label="认证方式"
             required
             error={errors.auth_type?.message}
-            className="sm:col-span-3"
+            className="sm:col-span-2"
           >
             {(id) => (
               <Controller
@@ -669,13 +691,13 @@ export function HostsPage() {
             )}
           </Field>
 
-          {authType === 'key' ? (
+          {authType === 'key' && (
             <Field
               label="密钥"
               required
               error={errors.key_id?.message}
               hint={keys.data?.length === 0 ? '密钥页尚未创建任何密钥' : undefined}
-              className="sm:col-span-3"
+              className="sm:col-span-2"
             >
               {(id) => (
                 <Controller
@@ -695,25 +717,26 @@ export function HostsPage() {
                 />
               )}
             </Field>
-          ) : (
-            <Field
-              label={editing ? '新密码' : '密码'}
-              required={!editing}
-              error={errors.password?.message}
-              hint={editing ? '留空则不修改' : undefined}
-              className="sm:col-span-3"
-            >
-              {(id) => (
-                <Input
-                  id={id}
-                  type="password"
-                  autoComplete="new-password"
-                  invalid={Boolean(errors.password)}
-                  {...register('password', { required: editing ? false : '请输入密码' })}
-                />
-              )}
-            </Field>
           )}
+          <Field
+            label={authType === 'key' ? '密码兜底（可选）' : editing ? '新密码' : '密码'}
+            required={passwordRequired}
+            error={errors.password?.message}
+            hint={passwordHint}
+            className={authType === 'key' ? 'sm:col-span-2' : 'sm:col-span-4'}
+          >
+            {(id) => (
+              <Input
+                id={id}
+                type="password"
+                autoComplete="new-password"
+                invalid={Boolean(errors.password)}
+                {...register('password', {
+                  required: passwordRequired ? '请输入密码' : false,
+                })}
+              />
+            )}
+          </Field>
 
           <Field label="跳板主机" hint="选中后先经该主机建立隧道再连目标" className="sm:col-span-6">
             {(id) => (

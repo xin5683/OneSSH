@@ -30,8 +30,8 @@ type Input struct {
 	Port           int      `json:"port" jsonschema:"SSH 端口，省略或 0 表示 22"`
 	Username       string   `json:"username" jsonschema:"SSH 登录用户名"`
 	AuthType       string   `json:"auth_type" jsonschema:"认证方式：key 或 password"`
-	KeyID          *int64   `json:"key_id,omitempty" jsonschema:"key 认证使用的密钥 ID，auth_type=key 时必填"`
-	Password       *string  `json:"password,omitempty" jsonschema:"登录密码；auth_type 为 password 时必填，只写不可读，审计中固定脱敏"`
+	KeyID          *int64   `json:"key_id,omitempty" jsonschema:"key 认证使用的密钥 ID，auth_type 为 key 时必填"`
+	Password       *string  `json:"password,omitempty" jsonschema:"登录密码；auth_type 为 password 时必填。auth_type 为 key 时可填可选兜底密码，密钥被服务端拒绝后使用；只写不可读，审计中固定脱敏"`
 	JumpHost       string   `json:"jump_host,omitempty" jsonschema:"跳板主机名（可选）：连接时先经该主机建立隧道再连目标，留空表示直连。跳板主机必须已存在；链路最多 5 级且不能成环"`
 	MonitorEnabled *bool    `json:"monitor_enabled,omitempty" jsonschema:"是否纳入后台资源监控轮询，新建时默认开启"`
 	Tags           []string `json:"tags,omitempty" jsonschema:"主机标签，用于分组与筛选；自动去空白去重，单个最长 32 字符，最多 16 个"`
@@ -243,7 +243,22 @@ func (m *Manager) hostFromInput(ctx context.Context, old store.Host, in Input, u
 			return store.Host{}, &Error{Kind: ErrorInternal, Err: err}
 		}
 		host.KeyID = sql.NullInt64{Int64: *in.KeyID, Valid: true}
-		host.PasswordEnc = nil
+		if in.Password != nil {
+			if *in.Password == "" {
+				host.PasswordEnc = nil
+			} else {
+				plain := []byte(*in.Password)
+				enc, err := m.box.Seal(plain)
+				clear(plain)
+				if err != nil {
+					return store.Host{}, &Error{Kind: ErrorInternal, Err: err}
+				}
+				host.PasswordEnc = enc
+			}
+		} else if !updating || old.AuthType != "key" {
+			// 新建密钥主机或从密码认证切换过来时没有可沿用值。
+			host.PasswordEnc = nil
+		}
 	case "password":
 		host.KeyID = sql.NullInt64{}
 		if in.Password != nil {

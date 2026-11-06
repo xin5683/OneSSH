@@ -52,6 +52,7 @@ type HostView struct {
 	Username       string   `json:"username"`
 	AuthType       string   `json:"auth_type"`
 	KeyID          *int64   `json:"key_id"`
+	HasPassword    bool     `json:"has_password"`
 	HostKeyFP      *string  `json:"hostkey_fp"`
 	JumpHostID     *int64   `json:"jump_host_id"`
 	MonitorEnabled bool     `json:"monitor_enabled"`
@@ -62,7 +63,7 @@ type HostView struct {
 }
 
 func (h Host) View() HostView {
-	v := HostView{ID: h.ID, Name: h.Name, Addr: h.Addr, Port: h.Port, Username: h.Username, AuthType: h.AuthType, MonitorEnabled: h.MonitorEnabled, Tags: h.Tags, CreatedAt: h.CreatedAt}
+	v := HostView{ID: h.ID, Name: h.Name, Addr: h.Addr, Port: h.Port, Username: h.Username, AuthType: h.AuthType, HasPassword: len(h.PasswordEnc) > 0, MonitorEnabled: h.MonitorEnabled, Tags: h.Tags, CreatedAt: h.CreatedAt}
 	if v.Tags == nil {
 		v.Tags = []string{}
 	}

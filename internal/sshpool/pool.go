@@ -114,6 +114,17 @@ func (p *Pool) dial(ctx context.Context, h store.Host, via []string) (*ssh.Clien
 			return nil, fmt.Errorf("解析私钥: %w", err)
 		}
 		auths = append(auths, ssh.PublicKeys(signer))
+		if len(h.PasswordEnc) > 0 {
+			plain, err := p.box.Open(h.PasswordEnc)
+			if err != nil {
+				return nil, fmt.Errorf("解密密码兜底凭据: %w", err)
+			}
+			fallbackAuths, fallbackCallback := passwordAuthentication(string(plain))
+			clear(plain)
+			// x/crypto/ssh 按 Auth 顺序尝试：密钥不通过时继续使用密码。
+			auths = append(auths, fallbackAuths...)
+			authCallback = fallbackCallback
+		}
 	default:
 		return nil, fmt.Errorf("不支持的认证类型 %q", h.AuthType)
 	}

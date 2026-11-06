@@ -8,6 +8,8 @@ export type Host = {
   username: string
   auth_type: 'key' | 'password'
   key_id?: number
+  /** 已保存密码；key 认证下代表密钥失败后的兜底密码 */
+  has_password: boolean
   hostkey_fp?: string
   /** 跳板主机 id；缺省表示直连 */
   jump_host_id?: number
